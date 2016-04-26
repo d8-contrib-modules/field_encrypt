@@ -416,4 +416,41 @@ class FieldEncryptProcessEntities implements FieldEncryptProcessEntitiesInterfac
     }
   }
 
+  /**
+   * {@inheritdoc}
+   */
+  public function entitySetCacheTags(ContentEntityInterface $entity, &$build) {
+    $uncacheable_fields = $this->getUncacheableFields($entity);
+    foreach ($uncacheable_fields as $field_name) {
+      $build[$field_name]['#cache']['max-age'] = 0;
+    }
+  }
+
+  /**
+   * Get field names for an entity that are set to be excluded from cache.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityInterface $entity
+   *   The entity to check.
+   *
+   * @return array
+   *   List of field names that are excluded from cache.
+   */
+  protected function getUncacheableFields(ContentEntityInterface $entity) {
+    $uncacheable_fields = [];
+    foreach ($entity->getFields() as $field) {
+      if ($this->checkField($field)) {
+        /* @var $definition \Drupal\Core\Field\BaseFieldDefinition */
+        $definition = $field->getFieldDefinition();
+        /* @var $storage \Drupal\Core\Field\FieldConfigStorageBase */
+        $storage = $definition->get('fieldStorage');
+
+        // If uncacheable is set, set caching max-age to 0.
+        if ($storage->getThirdPartySetting('field_encrypt', 'uncacheable', FALSE) == TRUE) {
+          $uncacheable_fields[] = $field->getName();
+        }
+      }
+    }
+    return $uncacheable_fields;
+  }
+
 }

@@ -4,8 +4,12 @@
  * Contains module hooks for field_encrypt.
  */
 
+use Drupal\Core\Entity\ContentEntityTypeInterface;
+use Drupal\Core\Entity\Display\EntityViewDisplayInterface;
+use Drupal\Core\Entity\DynamicallyFieldableEntityStorageInterface;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\field\Entity\FieldStorageConfig;
 
 /**
  * Implements hook_form_alter().
@@ -85,6 +89,19 @@ function field_encrypt_form_alter(&$form, FormStateInterface $form_state, $form_
         ],
       );
 
+      // Add setting to decide if field should be excluded from cache.
+      $form['field_encrypt']['field_encrypt']['uncacheable'] = [
+        '#type' => 'checkbox',
+        '#title' => t('Uncacheable'),
+        '#description' => t('Mark this field as uncacheable. This will make sure your unencrypted data will not be exposed in the cache, but will have a negative impact on your performance.'),
+        '#default_value' => $field->getThirdPartySetting('field_encrypt', 'uncacheable', TRUE),
+        '#states' => [
+          'visible' => [
+            ':input[name="field_encrypt[encrypt]"]' => array('checked' => TRUE),
+          ],
+        ],
+      ];
+
       // We add functions to process the form when it is saved.
       $form['#entity_builders'][] = 'field_encrypt_form_field_add_form_builder';
     }
@@ -106,7 +123,6 @@ function field_encrypt_form_alter(&$form, FormStateInterface $form_state, $form_
 function field_encrypt_form_field_add_form_builder($entity_type, \Drupal\field\Entity\FieldStorageConfig $field_storage_config, &$form, \Drupal\Core\Form\FormStateInterface $form_state) {
   $field_encryption_settings = $form_state->getValue('field_encrypt');
   $field_encryption_settings['encrypt'] = (bool) $field_encryption_settings['encrypt'];
-  $original_encryption = $field_storage_config->getThirdPartySettings('field_encrypt');
 
   // If the form has the value, we set it.
   if ($field_encryption_settings['encrypt']) {
@@ -119,6 +135,16 @@ function field_encrypt_form_field_add_form_builder($entity_type, \Drupal\field\E
     $field_storage_config->unsetThirdPartySetting('field_encrypt', 'encrypt');
     $field_storage_config->unsetThirdPartySetting('field_encrypt', 'properties');
     $field_storage_config->unsetThirdPartySetting('field_encrypt', 'encryption_profile');
+    $field_storage_config->unsetThirdPartySetting('field_encrypt', 'uncacheable');
+  }
+}
+
+/**
+ * Implements hook_entity_view().
+ */
+function field_encrypt_entity_view(array &$build, EntityInterface $entity, EntityViewDisplayInterface $display, $view_mode) {
+  if (field_encrypt_allow_encryption($entity)) {
+    \Drupal::service('field_encrypt.process_entities')->entitySetCacheTags($entity, $build);
   }
 }
 
@@ -207,4 +233,22 @@ function field_encrypt_allow_encryption(EntityInterface $entity) {
     $allowed = FALSE;
   }
   return $allowed;
+}
+
+/**
+ * Implements hook_entity_type_alter().
+ */
+function field_encrypt_entity_type_alter(array &$entity_types) {
+  $uncacheable_types = \Drupal::state()->get('uncacheable_entity_types');
+  if ($uncacheable_types) {
+    // Mark entity types uncacheable if they contain an encrypted field
+    // that has been marked uncacheable.
+    // See Drupal\field_encrypt\EventSubscriber\ConfigSubscriber
+    // setUncacheableEntityTypes().
+    foreach ($uncacheable_types as $uncacheable_type) {
+      $entity_types[$uncacheable_type]->set('static_cache', FALSE);
+      $entity_types[$uncacheable_type]->set('render_cache', FALSE);
+      $entity_types[$uncacheable_type]->set('persistent_cache', FALSE);
+    }
+  }
 }
